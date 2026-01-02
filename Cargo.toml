@@ -1,0 +1,15 @@
+[package]
+name = "vrchat_ant_hr"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ant = { git = "https://github.com/cujomalainey/ant-rs.git", package = "ant" }
+rusb = "0.9.3"
+dialoguer = "0.11.0"
+thingbuf = "0.1.0"
+vrchat_osc = "1.3.0"
+tokio = { version = "1", features = ["full"] }
+log = "0.4"
+env_logger = "0.10"
+once_cell = "1.17.0"
