@@ -1,4 +1,5 @@
 use crate::channels::{RxReceiver, TxSender};
+use crate::config::HeartRateData;
 use ant::drivers::{UsbDriver, is_ant_usb_device_from_device};
 use ant::messages::config::SetNetworkKey;
 use ant::plus::profiles::heart_rate::{
@@ -14,14 +15,7 @@ use thingbuf::mpsc::channel;
 use tokio::sync::broadcast;
 use tokio::sync::watch;
 
-static BPM_SENDER: OnceLock<watch::Sender<Option<u8>>> = OnceLock::new();
-
-/// Normalizes BPM value to OSC-compatible range (-1.0 to 1.0)
-///
-/// Maps 0-255 BPM to -1.0 to 1.0 using linear interpolation.
-pub fn normalize_bpm(bpm: u8) -> f32 {
-    (bpm as f32 / 255.0) * 2.0 - 1.0
-}
+static BPM_SENDER: OnceLock<watch::Sender<Option<HeartRateData>>> = OnceLock::new();
 
 /// Selects an ANT+ USB device from available devices
 fn select_ant_device() -> Result<Device<rusb::GlobalContext>> {
@@ -59,15 +53,80 @@ fn select_ant_device() -> Result<Device<rusb::GlobalContext>> {
 }
 
 fn handle_rx(data: Result<MonitorTxDataPage, HrError>) {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU8, AtomicU16, Ordering};
+
+    static PREV_BEAT_COUNT: OnceLock<Arc<AtomicU8>> = OnceLock::new();
+    static PREV_EVENT_TIME: OnceLock<Arc<AtomicU16>> = OnceLock::new();
+
+    let _ = PREV_BEAT_COUNT.get_or_init(|| Arc::new(AtomicU8::new(0)));
+    let _ = PREV_EVENT_TIME.get_or_init(|| Arc::new(AtomicU16::new(0)));
+
     match data {
         Ok(MonitorTxDataPage::PreviousHeartBeat(data)) => {
             let bpm = data.common.computed_heart_rate;
             if bpm > 0 {
-                log::debug!("Received heart rate: {} BPM", bpm);
-                if let Some(sender) = BPM_SENDER.get()
-                    && let Err(e) = sender.send(Some(bpm))
-                {
-                    log::warn!("Failed to send BPM to watch channel: {}", e);
+                let beat_count = data.common.heart_beat_count;
+                let event_time = data.common.heart_beat_event_time;
+
+                let prev_beat_count = PREV_BEAT_COUNT.get().unwrap().load(Ordering::SeqCst);
+                let prev_event_time = PREV_EVENT_TIME.get().unwrap().load(Ordering::SeqCst);
+
+                let (intra_beat_time, skipped) = if prev_beat_count > 0 {
+                    let count_diff = beat_count.wrapping_sub(prev_beat_count) as u16;
+                    let time_diff = if event_time >= prev_event_time {
+                        event_time - prev_event_time
+                    } else {
+                        event_time.wrapping_add(1024u16.wrapping_sub(prev_event_time))
+                    };
+
+                    let skipped = count_diff > 1;
+                    let intra_beat_time = if count_diff > 0 {
+                        Some(time_diff / count_diff)
+                    } else {
+                        None
+                    };
+
+                    (intra_beat_time, skipped)
+                } else {
+                    (None, false)
+                };
+
+                let new_beat = prev_beat_count == 0 || beat_count != prev_beat_count;
+
+                PREV_BEAT_COUNT
+                    .get()
+                    .unwrap()
+                    .store(beat_count, Ordering::SeqCst);
+                PREV_EVENT_TIME
+                    .get()
+                    .unwrap()
+                    .store(event_time, Ordering::SeqCst);
+
+                log::debug!(
+                    "Received heart rate: {} BPM, beat count: {}, event time: {}, intra-beat: {:?}, skipped: {}",
+                    bpm,
+                    beat_count,
+                    event_time,
+                    intra_beat_time,
+                    skipped
+                );
+
+                if skipped {
+                    log::warn!(
+                        "Skipped heart beat(s) detected (beat count increased by more than 1)"
+                    );
+                }
+
+                if new_beat {
+                    if let Some(sender) = BPM_SENDER.get()
+                        && let Err(e) = sender.send(Some(HeartRateData {
+                            bpm,
+                            intra_beat_time,
+                        }))
+                    {
+                        log::warn!("Failed to send heart rate data to watch channel: {}", e);
+                    }
                 }
             }
         }
@@ -81,7 +140,7 @@ fn handle_rx(data: Result<MonitorTxDataPage, HrError>) {
 }
 
 pub fn run_ant(
-    bpm_sender: watch::Sender<Option<u8>>,
+    bpm_sender: watch::Sender<Option<HeartRateData>>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> Result<()> {
     log::info!("ANT+ thread started");
