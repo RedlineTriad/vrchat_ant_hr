@@ -6,12 +6,9 @@ Bridges ANT+ heart-rate sensors to VRChat using OSC. Reads BPM from an ANT+ USB 
 
 This small Rust application listens for heart-rate data from ANT+ heart-rate monitors (chest straps or other ANT+ HR devices) via an ANT+ USB radio and forwards those measurements to VRChat clients using OSC (Open Sound Control) so you can drive avatar parameters from a real HR sensor.
 
-Key behaviors:
 - Detects ANT+ USB radios plugged into the host machine (selects one if multiple are present).
 - Opens an ANT+ Heart Rate Display channel and listens for HR datapages.
 - Sends each received BPM as a normalized float (approx. -1.0..1.0) to the OSC address `/avatar/parameters/Heartrate` for all VRChat clients.
-
-The program combines synchronous USB/ANT interactions (blocking thread) with async networking via `tokio` to integrate low-level hardware access and the VRChat OSC service.
 
 ## Technologies and crates used
 
@@ -34,6 +31,8 @@ See `Cargo.toml` for the full dependency list.
   - macOS: `brew install libusb pkg-config`
   - Windows: install libusb and ensure the USB device driver allows libusb access (Zadig may help).
 - Rust toolchain and `cargo` (stable channel recommended).
+
+### Permissions
 
 USB permissions: the process must be able to open the ANT+ USB dongle. Prefer creating a `udev` rule for your device rather than running the app as root. Example udev rule (replace vendor/product IDs):
 
@@ -99,8 +98,3 @@ You can change the mapping or the OSC address in `src/main.rs`.
 
 - Please open issues or pull requests for fixes or improvements.
 - Keep changes focused and document any new configuration options.
-
-## Notes
-
-- This program interacts with hardware and network services. Avoid running with elevated privileges whenever possible; prefer granting device access to your user via OS facilities.
-- If you want, I can add a small `udev` helper file or a config file to make OSC address and normalization adjustable at runtime—tell me which you prefer and I can add it.
