@@ -1,7 +1,7 @@
 [package]
 name = "vrchat_ant_hr"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 ant = { git = "https://github.com/cujomalainey/ant-rs.git", package = "ant" }
