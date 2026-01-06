@@ -26,7 +26,10 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    env_logger::builder().init();
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Info)
+        .parse_env(env_logger::Env::default())
+        .init();
 
     log::info!("Starting vrchat_ant_hr");
     log::info!("BPM mode: {:?}", cli.bpm);
